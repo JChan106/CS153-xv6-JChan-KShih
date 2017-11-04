@@ -14,16 +14,53 @@ sys_fork(void)
 }
 
 int
-sys_exit(int status)
+sys_exit(void)
 {
-  exit(1);
+  int status;
+  argint(0, &status);
+  exit(status);    
   return 0;  // not reached
 }
 
 int
-sys_wait(int *status)
+sys_wait(void)
 {
+  int *status;
+  argptr(0, (char**)&status, sizeof(status));
   return wait(status);
+}
+
+int
+sys_waitpid(void)
+{
+   int pid;
+   argint(0, &pid);
+
+   int *status;
+   argptr(1,(char**) &status, sizeof(status));
+
+   int options;
+   argint(2, &options);
+
+   return waitpid(pid, status, 0);
+}
+
+int
+sys_getpriority(void) {
+   return getpriority();
+}
+
+
+int
+sys_setpriority(void) {
+   int priority;
+   argint(0, &priority);
+   return setpriority(priority);
+}
+
+int
+sys_findhighestpriority(void) {
+   return findhighestpriority();
 }
 
 int

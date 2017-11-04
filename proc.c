@@ -242,6 +242,7 @@ exit(int status)
     }
   }
 
+  curproc->status = status;
   begin_op();
   iput(curproc->cwd);
   end_op();
@@ -265,7 +266,6 @@ exit(int status)
   curproc->state = ZOMBIE;
   sched();
   panic("zombie exit");
-  p->status = status;
 }
 
 // Wait for a child process to exit and return its pid.
@@ -298,12 +298,9 @@ wait(int *status)
         p->state = UNUSED;
         release(&ptable.lock);
 	if (status != 0) {
-		*status = p->status;
+		*status = curproc->status;
 	}
         return pid;
-      }
-      else {
-        return -1;
       }
 
     }
@@ -311,6 +308,7 @@ wait(int *status)
     // No point waiting if we don't have any children.
     if(!havekids || curproc->killed){
       release(&ptable.lock);
+      *status = -1;
       return -1;
     }
 
@@ -322,19 +320,20 @@ wait(int *status)
 int waitpid(int pid, int *status, int options)
 {
   struct proc *p;
-  int havekids, pid;
+  int havekids, zpid;
   struct proc *curproc = myproc();
   
   acquire(&ptable.lock);
-    // Scan through table looking for matching pid
+  for(;;){
+    // Scan through table looking for exited children.
     havekids = 0;
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->pid != pid)
+      if(p->parent != curproc)
         continue;
       havekids = 1;
-      if(p->state == ZOMBIE){
+      if(p->state == ZOMBIE && (p->pid == pid)){
         // Found one.
-        pid = p->pid;
+        zpid = p->pid;
         kfree(p->kstack);
         p->kstack = 0;
         freevm(p->pgdir);
@@ -343,68 +342,64 @@ int waitpid(int pid, int *status, int options)
         p->name[0] = 0;
         p->killed = 0;
         p->state = UNUSED;
-        release(&ptable.lock);
 	if (status != 0) {
 		*status = p->status;
 	}
-        return pid;
-      }
-      else {
-        return -1;
+        release(&ptable.lock);
+        return zpid;
       }
 
     }
-
-    return -1;
-}
-
-
-//PAGEBREAK: 42
-// Per-CPU process scheduler.
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-        if(p->pid == pid){
-            pid = p->pid;
-            kfree(p->kstack);
-            p->kstack = 0;
-            freevm(p->pgdir);
-            p->pid = 0;
-            p->parent = 0;
-            p->name[0] = 0;
-            p->killed = 0;
-            p->state = UNUSED;
-            release(&ptable.lock);
-	    if (status != 0) {
-		*status = p->status;
-	    }
-            return pid;
-      } 
-      
-/bin/bash: q: command not found
-    return -1;
-}
-//PAGEBREAK: 42
-// Per-CPU process scheduler.
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-        if(p->pid == pid){
-            pid = p->pid;
-            kfree(p->kstack);
-            p->kstack = 0;
-            freevm(p->pgdir);
-            p->pid = 0;
-            p->parent = 0;
-            p->name[0] = 0;
-            p->killed = 0;
-            p->state = UNUSED;
-            release(&ptable.lock);
-	    if (status != 0) {
-		*status = p->status;
-	    }
-            return pid;
-      } 
-      
+    if(!havekids || curproc->killed){
+      release(&ptable.lock);
+      *status = -1;
+      return -1;
     }
-    return -1;
+
+    // Wait for children to exit.  (See wakeup1 call in proc_exit.)
+    sleep(curproc, &ptable.lock);  //DOC: wait-sleep
+  }
 }
+
+//sets  priority of the processes
+//
+int
+setpriority(int priority) {
+   acquire(&ptable.lock);
+   struct proc *curproc = myproc();
+
+   curproc->state = RUNNABLE;
+   curproc->priority = priority;
+
+   release(&ptable.lock);
+   yield();
+   return priority;
+}
+
+int
+getpriority(void) {
+   struct proc *curproc = myproc();
+   return curproc->priority;
+
+}
+
+int
+findhighestpriority(void) {
+   struct proc *p;
+   int highestPriority = 63;  //starts at the lowest priority
+   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+      if(p->state != RUNNABLE) {
+         continue;
+      }
+      else if(p->priority < highestPriority) { //if the current process has a higher priority than previous highest priority
+         highestPriority = p->priority;        //then set new highest priority
+      }
+   }
+   return highestPriority;
+
+}
+
+
 //PAGEBREAK: 42
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
@@ -418,11 +413,16 @@ scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
+  int highestpr; 
   c->proc = 0;
   
   for(;;){
     // Enable interrupts on this processor.
     sti();
+
+
+    //find highest priority in processes
+    highestpr = findhighestpriority();
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
@@ -433,6 +433,9 @@ scheduler(void)
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
+      if (p->priority > highestpr) {
+         continue;
+      }
       c->proc = p;
       switchuvm(p);
       p->state = RUNNING;
@@ -508,8 +511,53 @@ forkret(void)
 
 // Atomically release lock and sleep on chan.
 // Reacquires lock when awakened.
+void
+sleep(void*chan, struct spinlock *lk)
+{
+    struct proc *p = myproc();
+    
+    if(p == 0)
+	panic("sleep");
+
+    // Must acquire ptable.lock in order to
+    // change p->state and then call sched.
+    // Once we hold ptable.lock, we can be
+    // guaranteed that we won't miss any wakeup
+    // (wakeup runs with ptable.lock locked),
+    // so its okay to release lk.
+
+
+    if(lk != &ptable.lock){  //DOC: sleeplock0
+        acquire(&ptable.lock);  //DOC: sleeplock1
+        release(lk);
+    }
+
+    // Go to sleep.
+    p->chan = chan;
+    p->state = SLEEPING;
+    sched();
+ 
+    // Tidy up.
+    p->chan = 0;
+  
+    // Reacquire original lock.
+    if(lk != &ptable.lock){  //DOC: sleeplock2
+       release(&ptable.lock);
+        acquire(lk);
+  }
+}
+ 
+//PAGEBREAK!
+//Wake up all processes sleeping on chan.
+//The ptable lock must be held. 
+ 
+static void
+wakeup1(void *chan)
+{
+   struct proc *p;
+  for(p= ptable.proc;p <&ptable.proc[NPROC]; p++)
     if(p->state == SLEEPING && p->chan == chan)
-      p->state = RUNNABLE;
+       p->state = RUNNABLE;
 }
 
 // Wake up all processes sleeping on chan.
