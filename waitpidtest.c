@@ -14,13 +14,19 @@ int main(int argc, char *argv[]) {
   int pidTwo = 0;
 
   pidOne = fork();
-
+  int stat;
+  wait(&stat);
+  printf(1, "waitchild %d", stat);
   if (pidOne != 0) {
     printf(1, "one\n");
     pidTwo = fork();
+    //int stat;
+    //wait(&stat);
+    //printf(1,"wait child %d",stat);
     if (pidTwo != 0) {
-      waitpid(pidOne, 0, 0);
-      printf(1, "two\n");
+      int status;
+      waitpid(pidOne, &status, 0);
+      printf(1, "two %d\n",status);
       waitpid(pidTwo, 0, 0);
       printf(1,"three\n");
       exit(0);
