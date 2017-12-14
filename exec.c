@@ -39,7 +39,7 @@ exec(char *path, char **argv)
     goto bad;
 
   // Load program into memory.
-  sz = 0;
+  sz = 0; //CHANGED SZ FROM 0 TO PGSIZE -1
   for(i=0, off=elf.phoff; i<elf.phnum; i++, off+=sizeof(ph)){
     if(readi(ip, (char*)&ph, off, sizeof(ph)) != sizeof(ph))
       goto bad;
@@ -63,10 +63,11 @@ exec(char *path, char **argv)
   // Allocate two pages at the next page boundary.
   // Make the first inaccessible.  Use the second as the user stack.
   sz = PGROUNDUP(sz);
-  if((sz = allocuvm(pgdir, sz, sz + 2*PGSIZE)) == 0)
+  uint stack = PGROUNDDOWN(KERNBASE - 4); 
+  if((stack = allocuvm(pgdir, stack, KERNBASE - 1)) == 0) //cs153 grow to the kernbase
     goto bad;
-  clearpteu(pgdir, (char*)(sz - 2*PGSIZE));
-  sp = sz;
+  //clearpteu(pgdir, (char*)(sz - 2*PGSIZE)); //invalidate the page cs153
+  sp = stack; //stack pointer now point to the stack cs153
 
   // Push argument strings, prepare rest of stack in ustack.
   for(argc = 0; argv[argc]; argc++) {
@@ -97,6 +98,7 @@ exec(char *path, char **argv)
   oldpgdir = curproc->pgdir;
   curproc->pgdir = pgdir;
   curproc->sz = sz;
+  curproc->numstackpages = 1; //cs153 makes the number of number of stack pages 1
   curproc->tf->eip = elf.entry;  // main
   curproc->tf->esp = sp;
   switchuvm(curproc);

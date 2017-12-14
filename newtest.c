@@ -6,9 +6,8 @@
 
 
 int PScheduler(void) {
- int pid, ret_pid, exit_status;
+ int pid, ret_pid=-1, exit_status=100;
   int i,j,k;
-  int pri;
     printf(1, "\n  Step 2: testing the priority scheduler and setpriority(int priority)) systema call:\n");
     printf(1, "\n  Step 2: Assuming that the priorities range between range between 1 to 63\n");
     printf(1, "\n  Step 2: 1 is the highest priority. All processes have a default priority of 20\n");
@@ -39,7 +38,7 @@ int PScheduler(void) {
                      printf(1,"\n if processes with highest priority finished first then its correct \n");
 	}	
 			
-	return 0;
+	return ret_pid;
 
 
 }
